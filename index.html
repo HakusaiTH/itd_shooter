@@ -1,0 +1,228 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>ITD Space Shooter - Galaxy Defender</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@400;600;800;900&family=Prompt:wght@300;400;600;700&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+    <div id="app-container">
+        <!-- Start Screen Overlay (Fullscreen 100vw x 100vh) -->
+        <div id="startScreen" class="screen-overlay">
+            <div class="start-bg-backdrop"></div>
+            <div class="start-content-card">
+                <div class="logo-badge">ITD DEFENDER</div>
+                <h1 class="game-title">SPACE SHOOTER</h1>
+                <p class="game-subtitle">ปกป้องกาแล็กซีด้วยยานรบสุดแกร่ง!</p>
+
+                <div class="controls-guide">
+                    <h3>วิธีเล่น (CONTROLS)</h3>
+                    <div class="controls-grid">
+                        <div class="control-item">
+                            <span class="key-badge">←</span>
+                            <span class="key-badge">→</span>
+                            <span class="control-desc">เลื่อนซ้าย - ขวา (Keyboard)</span>
+                        </div>
+                        <div class="control-item">
+                            <span class="key-badge">A</span>
+                            <span class="key-badge">D</span>
+                            <span class="control-desc">เลื่อนซ้าย - ขวา (Alternative)</span>
+                        </div>
+                        <div class="control-item">
+                            <span class="key-badge">MOUSE / TOUCH</span>
+                            <span class="control-desc">ลากเมาส์ / นิ้ว เลื่อนซ้าย - ขวา</span>
+                        </div>
+                        <div class="control-item">
+                            <span class="key-badge">AUTO FIRE</span>
+                            <span class="control-desc">ยานรบยิงกระสุนอัตโนมัติ!</span>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="high-score-preview">
+                    <span>HIGH SCORE: </span>
+                    <strong id="startHighScore">0</strong>
+                </div>
+
+                <button id="startGameBtn" class="primary-btn pulse-glow">
+                    <span>เริ่มเกม (START GAME)</span>
+                </button>
+            </div>
+        </div>
+
+        <!-- 70% Centered Gameplay Viewport Container -->
+        <div id="game-viewport">
+            <!-- Game Canvas -->
+            <canvas id="gameCanvas"></canvas>
+
+        <!-- HUD Overlay (Visible during gameplay) -->
+        <div id="hud" class="ui-overlay hidden">
+            <!-- Top HUD Row (Score, Controls, Boss) -->
+            <div class="hud-top-row">
+                <!-- Top Center: Score & Controls -->
+                <div class="hud-center-group">
+                    <div class="stat-card">
+                        <span class="stat-label">SCORE</span>
+                        <span id="scoreText" class="stat-value">000000</span>
+                    </div>
+                    <div class="stat-card">
+                        <span class="stat-label">COMBO</span>
+                        <span id="comboText" class="stat-value alt">x1</span>
+                    </div>
+                    <div class="hud-controls-btns">
+                        <button id="soundToggleBtn" class="icon-btn" title="Toggle Sound">
+                            <span id="soundIcon">
+                                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                                    <polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"></polygon>
+                                    <path d="M19.07 4.93a10 10 0 0 1 0 14.14M15.54 8.46a5 5 0 0 1 0 7.07"></path>
+                                </svg>
+                            </span>
+                        </button>
+                        <button id="pauseBtn" class="icon-btn" title="Pause Game">
+                            <span>
+                                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+                                    <rect x="6" y="4" width="4" height="16"></rect>
+                                    <rect x="14" y="4" width="4" height="16"></rect>
+                                </svg>
+                            </span>
+                        </button>
+                    </div>
+                </div>
+
+                <!-- Top Right: Boss Status with Avatar Icon (Active during boss battle) -->
+                <div id="bossHpContainer" class="hud-boss-corner boss-hud-overlay hidden">
+                    <div class="boss-status-info">
+                        <div class="boss-title-bar">
+                            <span class="boss-tag">
+                                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-1px; margin-right:3px;">
+                                    <path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"></path>
+                                    <line x1="12" y1="9" x2="12" y2="13"></line>
+                                    <line x1="12" y1="17" x2="12.01" y2="17"></line>
+                                </svg>
+                                DANGER
+                            </span>
+                            <span class="boss-name">ITD MECHA BOSS</span>
+                        </div>
+                        <div class="meter-bar boss-hp-meter">
+                            <div id="bossHpFill" class="meter-fill boss-fill" style="width: 100%;"></div>
+                        </div>
+                    </div>
+                    <img src="image/boss_icon.png" alt="Boss" class="hud-avatar boss-avatar">
+                </div>
+            </div>
+
+            <!-- Floating Bottom-Left: Player Status with Avatar Icon -->
+            <div class="hud-player-corner float-bottom-left">
+                <img src="image/player_icon.png" alt="Player" class="hud-avatar player-avatar">
+                <div class="player-status-container">
+                    <div class="status-label">
+                        <span>HP</span>
+                        <span id="hpValue">100 / 100</span>
+                    </div>
+                    <div class="meter-bar hp-meter">
+                        <div id="hpFill" class="meter-fill" style="width: 100%;"></div>
+                    </div>
+                    
+                    <div class="status-label shield-label">
+                        <span>SHIELD</span>
+                        <span id="shieldValue">0 / 100</span>
+                    </div>
+                    <div class="meter-bar shield-meter">
+                        <div id="shieldFill" class="meter-fill" style="width: 0%;"></div>
+                    </div>
+
+                    <div class="weapon-status">
+                        <span id="weaponName" class="weapon-tag">NORMAL LASER</span>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Boss Entrance Alarm Flash -->
+            <div id="bossWarning" class="warning-overlay hidden">
+                <div class="warning-box">
+                    <div class="warning-text">
+                        <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="#ff0055" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-3px; margin-right:8px;">
+                            <path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"></path>
+                            <line x1="12" y1="9" x2="12" y2="13"></line>
+                            <line x1="12" y1="17" x2="12.01" y2="17"></line>
+                        </svg>
+                        BOSS APPROACHING
+                        <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="#ff0055" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-3px; margin-left:8px;">
+                            <path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"></path>
+                            <line x1="12" y1="9" x2="12" y2="13"></line>
+                            <line x1="12" y1="17" x2="12.01" y2="17"></line>
+                        </svg>
+                    </div>
+                    <div class="warning-sub">PREPARE FOR BATTLE</div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Pause Screen Overlay -->
+        <div id="pauseScreen" class="screen-overlay hidden backdrop-blur">
+            <div class="modal-card">
+                <h2>PAUSED</h2>
+                <p>เกมหยุดชั่วคราว</p>
+                <div class="modal-actions">
+                    <button id="resumeGameBtn" class="primary-btn">เล่นต่อ (RESUME)</button>
+                    <button id="restartFromPauseBtn" class="secondary-btn">เริ่มใหม่ (RESTART)</button>
+                </div>
+            </div>
+        </div>
+
+        <!-- Result / Summary Screen Overlay -->
+        <div id="resultScreen" class="screen-overlay hidden backdrop-blur">
+            <div class="result-card">
+                <div id="resultHeaderBadge" class="result-badge victory">VICTORY</div>
+                <h2 id="resultTitle" class="result-title">MISSION ACCOMPLISHED!</h2>
+                <p id="resultSubtitle" class="result-subtitle">คุณสามารถกำจัดบอสและปกป้องจักรวาลได้สำเร็จ!</p>
+
+                <div class="rank-display">
+                    <span class="rank-label">FINAL RANK</span>
+                    <div id="rankValue" class="rank-stamp rank-s">S</div>
+                </div>
+
+                <div class="stats-grid">
+                    <div class="stat-box">
+                        <span class="lbl">คะแนนรวม (FINAL SCORE)</span>
+                        <span id="resScore" class="val">0</span>
+                    </div>
+                    <div class="stat-box">
+                        <span class="lbl">ศัตรูที่ทำลาย (MINIONS KILLED)</span>
+                        <span id="resKills" class="val">0</span>
+                    </div>
+                    <div class="stat-box">
+                        <span class="lbl">ปราบบอสสำเร็จ (BOSS DEFEATED)</span>
+                        <span id="resBossDefeated" class="val highlight">YES</span>
+                    </div>
+                    <div class="stat-box">
+                        <span class="lbl">เวลาที่ใช้ (TIME SURVIVED)</span>
+                        <span id="resTime" class="val">00:00</span>
+                    </div>
+                    <div class="stat-box">
+                        <span class="lbl">คอมโบสูงสุด (MAX COMBO)</span>
+                        <span id="resCombo" class="val">x0</span>
+                    </div>
+                    <div class="stat-box">
+                        <span class="lbl">ความแม่นยำ (ACCURACY)</span>
+                        <span id="resAccuracy" class="val">0%</span>
+                    </div>
+                </div>
+
+                <div class="modal-actions">
+                    <button id="playAgainBtn" class="primary-btn pulse-glow">เล่นอีกครั้ง (PLAY AGAIN)</button>
+                    <button id="mainMenuBtn" class="secondary-btn">หน้าหลัก (MAIN MENU)</button>
+                </div>
+            </div>
+        </div>
+        </div>
+    </div>
+
+    <script src="js/audio.js"></script>
+    <script src="js/game.js"></script>
+</body>
+</html>
