@@ -30,11 +30,19 @@ class Game {
         this.resize();
         window.addEventListener('resize', () => this.resize());
 
-        // Controls State (X-Axis only)
+        // Controls State (5-Lane Grid System)
+        this.gridCols = 5;
+        this.playerGridIndex = 2; // Default center lane (0, 1, 2, 3, 4)
         this.keys = { left: false, right: false, fire: false };
         this.mouseX = this.width / 2;
         this.isPointerDown = false;
         this.usingMouse = false;
+
+        // micro:bit Serial Controls State
+        this.serialPort = null;
+        this.serialReader = null;
+        this.isSerialConnected = false;
+        this.lastBothPressed = false;
 
         // Statistics
         this.score = 0;
@@ -180,18 +188,25 @@ class Game {
                 ? '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"></polygon><line x1="23" y1="9" x2="17" y2="15"></line><line x1="17" y1="9" x2="23" y2="15"></line></svg>'
                 : '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"></polygon><path d="M19.07 4.93a10 10 0 0 1 0 14.14M15.54 8.46a5 5 0 0 1 0 7.07"></path></svg>';
         };
+
+        this.initSerial();
     }
 
     bindEvents() {
-        // Keyboard controls (X-Axis only)
+        // Keyboard controls (5-Lane Grid System)
         window.addEventListener('keydown', (e) => {
-            if (e.key === 'ArrowLeft' || e.key === 'a' || e.key === 'A') this.keys.left = true;
-            if (e.key === 'ArrowRight' || e.key === 'd' || e.key === 'D') this.keys.right = true;
+            if (e.key === 'ArrowLeft' || e.key === 'a' || e.key === 'A') {
+                if (this.playerGridIndex > 0) this.playerGridIndex--;
+                this.usingMouse = false;
+            }
+            if (e.key === 'ArrowRight' || e.key === 'd' || e.key === 'D') {
+                if (this.playerGridIndex < this.gridCols - 1) this.playerGridIndex++;
+                this.usingMouse = false;
+            }
             if (e.key === ' ') this.keys.fire = true;
             if (e.key === 'Escape' || e.key === 'p' || e.key === 'P') {
                 if (this.state === 'PLAYING' || this.state === 'PAUSED') this.togglePause();
             }
-            this.usingMouse = false;
         });
 
         window.addEventListener('keyup', (e) => {
@@ -239,6 +254,184 @@ class Game {
         });
     }
 
+    // --- Web Serial / micro:bit Controller Integration ---
+    initSerial() {
+        const connectBtn = document.getElementById('connectMicrobitBtn');
+        const hudConnectBtn = document.getElementById('hudMicrobitBtn');
+
+        const handleConnect = async () => {
+            if (!('serial' in navigator)) {
+                alert('เบราว์เซอร์ของคุณยังไม่รองรับ Web Serial API\nโปรดใช้งานบน Google Chrome หรือ Microsoft Edge');
+                return;
+            }
+            try {
+                if (this.isSerialConnected) {
+                    await this.disconnectSerial();
+                    return;
+                }
+                this.serialPort = await navigator.serial.requestPort();
+                await this.serialPort.open({ baudRate: 115200 });
+                this.isSerialConnected = true;
+                this.updateSerialUI(true);
+                this.readSerialLoop();
+            } catch (err) {
+                console.warn('Serial connection error or cancelled:', err);
+                this.updateSerialUI(false);
+            }
+        };
+
+        if (connectBtn) connectBtn.onclick = handleConnect;
+        if (hudConnectBtn) hudConnectBtn.onclick = handleConnect;
+
+        if ('serial' in navigator) {
+            navigator.serial.addEventListener('disconnect', (e) => {
+                if (e.target === this.serialPort) {
+                    this.disconnectSerial();
+                }
+            });
+        }
+    }
+
+    async disconnectSerial() {
+        this.isSerialConnected = false;
+        this.microbitTiltX = 0;
+        this.keys.left = false;
+        this.keys.right = false;
+
+        if (this.serialReader) {
+            try {
+                await this.serialReader.cancel();
+            } catch (e) {}
+            this.serialReader = null;
+        }
+        if (this.serialPort) {
+            try {
+                await this.serialPort.close();
+            } catch (e) {}
+            this.serialPort = null;
+        }
+        this.updateSerialUI(false);
+    }
+
+    async readSerialLoop() {
+        const textDecoder = new TextDecoderStream();
+        const readableStreamClosed = this.serialPort.readable.pipeTo(textDecoder.writable);
+        const reader = textDecoder.readable.getReader();
+        this.serialReader = reader;
+
+        let buffer = '';
+
+        try {
+            while (this.isSerialConnected) {
+                const { value, done } = await reader.read();
+                if (done) break;
+                if (value) {
+                    buffer += value;
+                    const lines = buffer.split('\n');
+                    buffer = lines.pop(); // Keep partial line in buffer
+
+                    for (let line of lines) {
+                        this.parseMicrobitData(line.trim());
+                    }
+                }
+            }
+        } catch (error) {
+            console.error('Error reading serial data:', error);
+            this.disconnectSerial();
+        } finally {
+            try {
+                reader.releaseLock();
+            } catch (e) {}
+        }
+    }
+
+    parseMicrobitData(data) {
+        if (!data) return;
+
+        const cmd = data.trim().toUpperCase();
+
+        if (cmd === 'PAUSE' || cmd === 'P') {
+            if (this.state === 'PLAYING' || this.state === 'PAUSED') {
+                this.togglePause();
+            }
+            return;
+        }
+
+        // 1. Direct Grid Index Command (e.g. "0", "1", "2", "3", "4")
+        const parsedIdx = parseInt(cmd, 10);
+        if (!isNaN(parsedIdx) && parsedIdx >= 0 && parsedIdx < this.gridCols) {
+            this.playerGridIndex = parsedIdx;
+            this.usingMouse = false;
+            return;
+        }
+
+        // 2. Relative Step Commands ("LEFT", "RIGHT")
+        if (cmd === 'LEFT' || cmd === 'L' || cmd === 'STEP_LEFT') {
+            if (this.playerGridIndex > 0) this.playerGridIndex--;
+            this.usingMouse = false;
+            return;
+        }
+
+        if (cmd === 'RIGHT' || cmd === 'R' || cmd === 'STEP_RIGHT') {
+            if (this.playerGridIndex < this.gridCols - 1) this.playerGridIndex++;
+            this.usingMouse = false;
+            return;
+        }
+
+        // 3. CSV Stream Data Format Handling ("btnA,btnB" or "accX,btnA,btnB")
+        const parts = data.split(',');
+        if (parts.length === 2 || parts.length >= 3) {
+            const btnAIndex = parts.length === 2 ? 0 : 1;
+            const btnBIndex = parts.length === 2 ? 1 : 2;
+
+            const btnA = parseInt(parts[btnAIndex], 10) === 1;
+            const btnB = parseInt(parts[btnBIndex], 10) === 1;
+
+            if (btnA && btnB) {
+                if (!this.lastBothPressed) {
+                    if (this.state === 'PLAYING' || this.state === 'PAUSED') {
+                        this.togglePause();
+                    }
+                    this.lastBothPressed = true;
+                }
+            } else {
+                this.lastBothPressed = false;
+
+                // Move left 1 grid column on rising edge
+                if (btnA && !this.lastBtnAState) {
+                    if (this.playerGridIndex > 0) this.playerGridIndex--;
+                }
+                // Move right 1 grid column on rising edge
+                if (btnB && !this.lastBtnBState) {
+                    if (this.playerGridIndex < this.gridCols - 1) this.playerGridIndex++;
+                }
+            }
+
+            this.lastBtnAState = btnA;
+            this.lastBtnBState = btnB;
+            this.usingMouse = false;
+        }
+    }
+
+    updateSerialUI(connected) {
+        const dot = document.getElementById('microbitStatusDot');
+        const text = document.getElementById('microbitBtnText');
+        const hintText = document.getElementById('microbitStatusText');
+        const hudDot = document.getElementById('hudMicrobitDot');
+
+        if (connected) {
+            if (dot) dot.className = 'status-dot connected';
+            if (text) text.textContent = '✅ micro:bit Connected';
+            if (hintText) hintText.textContent = 'เชื่อมต่อแล้ว! กดปุ่ม A (ซ้าย), B (ขวา) เพื่อควบคุม';
+            if (hudDot) hudDot.className = 'hud-status-dot connected';
+        } else {
+            if (dot) dot.className = 'status-dot disconnected';
+            if (text) text.textContent = '🔌 Connect micro:bit';
+            if (hintText) hintText.textContent = 'เชื่อมต่อ micro:bit ผ่าน USB Serial';
+            if (hudDot) hudDot.className = 'hud-status-dot disconnected';
+        }
+    }
+
     getAspectHeight(img, targetWidth, defaultRatio = 1) {
         if (img && img.naturalWidth > 0 && img.naturalHeight > 0) {
             return targetWidth * (img.naturalHeight / img.naturalWidth);
@@ -262,24 +455,26 @@ class Game {
         this.minionsKilled = 0;
         this.spawnTimer = 0;
 
-        // Player initial state with preserved aspect ratio
+        // Player initial state in 5-Lane Grid System
+        this.playerGridIndex = 2; // Center column (0, 1, 2, 3, 4)
         const pWidth = 80;
         const pHeight = this.getAspectHeight(this.assets.player, pWidth, 1);
+        const colWidth = this.width / this.gridCols;
 
         this.player = {
-            x: this.width / 2,
+            x: (this.playerGridIndex + 0.5) * colWidth,
             y: this.height - 110,
             width: pWidth,
             height: pHeight,
             speed: 8,
-            hp: 100,
-            maxHp: 100,
-            shield: 0,
+            hp: 500,        // Tanky HP (500 HP)
+            maxHp: 500,
+            shield: 100,    // Starting Shield (100 Shield)
             maxShield: 100,
             weaponType: 'NORMAL', // NORMAL, TRIPLE
             weaponTimer: 0,
             fireCooldown: 0,
-            fireRate: 12, // frames between shots
+            fireRate: 10,   // Rapid auto fire
             invulnerableTimer: 0
         };
 
@@ -344,13 +539,17 @@ class Game {
             }
         }
 
-        // 2. Player Controls (X-Axis only)
+        // 2. Player Controls (5-Lane Grid System with Smooth Transition)
         if (this.usingMouse) {
-            // Smooth lerp to mouse X position
+            // Smooth lerp to mouse X position & map to grid column
             this.player.x += (this.mouseX - this.player.x) * 0.2;
+            const colW = this.width / this.gridCols;
+            this.playerGridIndex = Math.min(this.gridCols - 1, Math.max(0, Math.floor(this.mouseX / colW)));
         } else {
-            if (this.keys.left) this.player.x -= this.player.speed;
-            if (this.keys.right) this.player.x += this.player.speed;
+            // Smooth lerp to target center of current grid column
+            const colW = this.width / this.gridCols;
+            const targetX = (this.playerGridIndex + 0.5) * colW;
+            this.player.x += (targetX - this.player.x) * 0.35;
         }
 
         // Clamp player X to screen boundaries
@@ -396,11 +595,14 @@ class Game {
             }
         }
 
-        // 5. Update Minions
+        // 5. Update Minions (Fly straight down assigned Grid Lane)
         for (let i = this.minions.length - 1; i >= 0; i--) {
             const m = this.minions[i];
             m.y += m.speedY;
-            m.x += Math.sin(m.y * 0.03) * m.amplitude;
+
+            // Lock X position to exact center of assigned Grid Lane
+            const colW = this.width / this.gridCols;
+            m.x = (m.laneIndex + 0.5) * colW;
 
             // Minion Shooting
             m.fireCooldown--;
@@ -552,22 +754,24 @@ class Game {
 
     spawnMinion() {
         this.minionsSpawned++;
-        const margin = 60;
-        const x = Math.random() * (this.width - margin * 2) + margin;
+        // Select random lane (0, 1, 2, 3, 4)
+        const laneIndex = Math.floor(Math.random() * this.gridCols);
+        const colW = this.width / this.gridCols;
+        const x = (laneIndex + 0.5) * colW;
 
         const mW = 65;
         const mH = this.getAspectHeight(this.assets.minion, mW, 0.9);
 
         this.minions.push({
             x: x,
+            laneIndex: laneIndex,
             y: -mH,
             width: mW,
             height: mH,
-            hp: 40,
-            maxHp: 40,
-            speedY: Math.random() * 1.5 + 1.8,
-            amplitude: Math.random() * 2 + 1,
-            fireCooldown: Math.floor(Math.random() * 60 + 40)
+            hp: 25, // 1-shot kill minion HP
+            maxHp: 25,
+            speedY: Math.random() * 1.5 + 2.0,
+            fireCooldown: Math.floor(Math.random() * 60 + 50)
         });
     }
 
@@ -582,7 +786,7 @@ class Game {
             vy: vy,
             width: ebW,
             height: ebH,
-            damage: 15
+            damage: 3 // Super light bullet damage (3 damage instead of 15)
         });
     }
 
@@ -605,8 +809,8 @@ class Game {
                 targetY: 170,
                 width: bW,
                 height: bH,
-                hp: 1500,
-                maxHp: 1500,
+                hp: 800, // Balanced Easy Boss HP
+                maxHp: 800,
                 vx: 3,
                 attackTimer: 0,
                 attackPhase: 1
@@ -717,7 +921,7 @@ class Game {
             this.player.hp -= amount;
         }
 
-        this.player.invulnerableTimer = 20; // flash invulnerability
+        this.player.invulnerableTimer = 40; // Flash invulnerability grace period
         this.createExplosion(this.player.x, this.player.y, '#ff0055', 10);
 
         if (this.player.hp <= 0) {
@@ -738,14 +942,14 @@ class Game {
     collectPowerup(type) {
         audioManager.playPowerup();
         if (type === 'HEALTH') {
-            this.player.hp = Math.min(this.player.maxHp, this.player.hp + 35);
-            this.addFloatingText(this.player.x, this.player.y, '+HP REPAIR', '#00ff88');
+            this.player.hp = Math.min(this.player.maxHp, this.player.hp + 150);
+            this.addFloatingText(this.player.x, this.player.y, '+150 HP REPAIR', '#00ff88');
         } else if (type === 'SHIELD') {
-            this.player.shield = Math.min(this.player.maxShield, this.player.shield + 50);
-            this.addFloatingText(this.player.x, this.player.y, '+SHIELD', '#00f0ff');
+            this.player.shield = Math.min(this.player.maxShield, this.player.shield + 100);
+            this.addFloatingText(this.player.x, this.player.y, '+FULL SHIELD', '#00f0ff');
         } else if (type === 'TRIPLE') {
             this.player.weaponType = 'TRIPLE';
-            this.player.weaponTimer = 600; // 10 seconds at 60 FPS
+            this.player.weaponTimer = 900; // 15 seconds of triple laser
             this.ui.weaponName.textContent = 'TRIPLE LASER';
             this.addFloatingText(this.player.x, this.player.y, 'TRIPLE LASER!', '#ffb700');
         }
@@ -876,13 +1080,26 @@ class Game {
         this.ctx.drawImage(this.assets.bg, 0, this.bgScrollY - this.height, this.width, this.height);
         this.ctx.drawImage(this.assets.bg, 0, this.bgScrollY, this.width, this.height);
 
-        // 2. Draw Stars
+        // 2. Draw Stars & 5-Lane Cyberpunk Grid Lines
         this.ctx.fillStyle = '#ffffff';
         for (let star of this.stars) {
             this.ctx.globalAlpha = star.alpha;
             this.ctx.fillRect(star.x, star.y, star.size, star.size);
         }
         this.ctx.globalAlpha = 1.0;
+
+        // Draw 5-Lane Grid Guides
+        const colW = this.width / this.gridCols;
+        this.ctx.strokeStyle = 'rgba(0, 240, 255, 0.12)';
+        this.ctx.lineWidth = 1.5;
+        this.ctx.setLineDash([10, 10]);
+        for (let i = 1; i < this.gridCols; i++) {
+            this.ctx.beginPath();
+            this.ctx.moveTo(i * colW, 0);
+            this.ctx.lineTo(i * colW, this.height);
+            this.ctx.stroke();
+        }
+        this.ctx.setLineDash([]);
 
         if (this.state !== 'PLAYING' && this.state !== 'PAUSED') return;
 
